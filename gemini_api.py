@@ -5,14 +5,37 @@ import json
 import os
 
 API_KEY_PLACEHOLDER = "YOUR_GEMINI_API_KEY_HERE"
+ENV_FILE = ".env"
+DEFAULT_MODEL = "gemini-2.5-flash"
+
+def load_local_env():
+    if not os.path.exists(ENV_FILE):
+        return
+
+    with open(ENV_FILE, "r", encoding="utf-8") as env_file:
+        for line in env_file:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
 
 def call_gemini(prompt):
+    load_local_env()
     api_key = os.environ.get("GEMINI_API_KEY", API_KEY_PLACEHOLDER).strip()
+    model = os.environ.get("GEMINI_MODEL", DEFAULT_MODEL).strip()
     if not api_key or api_key == API_KEY_PLACEHOLDER:
         print("Please set your Gemini API key with the GEMINI_API_KEY environment variable.")
         return
+    if not model:
+        print("Please set a Gemini model with the GEMINI_MODEL environment variable.")
+        return
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={api_key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
     data = {
         "contents": [{"parts": [{"text": prompt}]}]
     }
