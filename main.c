@@ -66,6 +66,7 @@ static gboolean suppress_open_once = FALSE;
 static void open_desktop_item(GtkButton *button, gpointer data);
 static void open_folder_window(const char *virtual_path);
 static void open_ai_prompt(void);
+static void open_browser(void);
 static const char *icon_for_name(const char *name, gboolean is_dir);
 static void populate_folder(FolderCtx *ctx, const char *query);
 
@@ -481,6 +482,16 @@ static void open_ai_prompt(void)
     gtk_box_append(GTK_BOX(box), run_btn);
     
     gtk_window_present(GTK_WINDOW(win));
+}
+
+static void open_browser(void)
+{
+    char *dir = g_get_current_dir();
+    /* Fix: start command without title string */
+    char *command = g_strdup_printf("cmd.exe /c start python \"%s/browser.py\"", dir);
+    g_spawn_command_line_async(command, NULL);
+    g_free(command);
+    g_free(dir);
 }
 
 static void open_desktop_item(GtkButton *button, gpointer data)
@@ -1234,6 +1245,15 @@ static void activate(GtkApplication *app, gpointer user_data)
     gtk_widget_set_margin_start(terminal_btn, 14);
     g_signal_connect(terminal_btn, "clicked", G_CALLBACK(open_terminal), NULL);
     gtk_box_append(GTK_BOX(taskbar), terminal_btn);
+
+    /* LEFT: Browser (next to Terminal) */
+    GtkWidget *browser_btn = gtk_button_new_with_label("Browser");
+    gtk_widget_add_css_class(browser_btn, "taskbar-btn");
+    gtk_widget_set_size_request(browser_btn, 110, 32);
+    gtk_widget_set_valign(browser_btn, GTK_ALIGN_CENTER);
+    gtk_widget_set_margin_start(browser_btn, 8);
+    g_signal_connect(browser_btn, "clicked", G_CALLBACK(open_browser), NULL);
+    gtk_box_append(GTK_BOX(taskbar), browser_btn);
 
     /* Spacer */
     GtkWidget *spacer1 = gtk_label_new("");

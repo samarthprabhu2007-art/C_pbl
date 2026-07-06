@@ -33,7 +33,8 @@ static CommandDef terminal_commands[] = {
     {"whoami", "whoami", "Show current user", "whoami", "SYSTEM", "Example:\n> whoami\nsamarth"},
     {"date", "date", "Show current date", "date", "SYSTEM", "Example:\n> date\nJul 06 2026"},
     {"clear", "clear", "Clear the terminal", "clear", "SYSTEM", "Example:\n> clear\n(Clears the terminal screen)"},
-    {"echo", "echo", "Print text", "echo <text>", "SYSTEM", "Example:\n> echo Hello World!\nHello World!"}
+    {"echo", "echo", "Print text", "echo <text>", "SYSTEM", "Example:\n> echo Hello World!\nHello World!"},
+    {"browse", "browse", "Open web browser", "browse [url]", "SYSTEM", "Example:\n> browse google.com\n(Opens browser at google.com)"}
 };
 static const int num_terminal_commands = sizeof(terminal_commands) / sizeof(CommandDef);
 
@@ -826,6 +827,21 @@ static void execute_command_string(const char *input_line, gboolean is_from_ai)
                 append_text("Failed to execute AI script.");
             }
         }
+    }
+    else if(strcmp(cmd_id, "browse") == 0)
+    {
+        char *dir = g_get_current_dir();
+        char *command;
+        if (args != NULL && trim(args)[0] != '\0') {
+            char *url = trim(args);
+            command = g_strdup_printf("cmd.exe /c start python \"%s/browser.py\" \"%s\"", dir, url);
+        } else {
+            command = g_strdup_printf("cmd.exe /c start python \"%s/browser.py\"", dir);
+        }
+        g_spawn_command_line_async(command, NULL);
+        append_text("Opening browser...");
+        g_free(command);
+        g_free(dir);
     }
 }
 
