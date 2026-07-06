@@ -487,8 +487,8 @@ static void open_ai_prompt(void)
 static void open_browser(void)
 {
     char *dir = g_get_current_dir();
-    /* Fix: start command without title string */
-    char *command = g_strdup_printf("cmd.exe /c start python \"%s/browser.py\"", dir);
+    /* Let Windows file association handle .py to bypass MSYS2 python PATH issues */
+    char *command = g_strdup_printf("cmd.exe /c start \"\" \"%s/browser.py\"", dir);
     g_spawn_command_line_async(command, NULL);
     g_free(command);
     g_free(dir);

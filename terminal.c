@@ -834,9 +834,10 @@ static void execute_command_string(const char *input_line, gboolean is_from_ai)
         char *command;
         if (args != NULL && trim(args)[0] != '\0') {
             char *url = trim(args);
-            command = g_strdup_printf("cmd.exe /c start python \"%s/browser.py\" \"%s\"", dir, url);
+            /* Let Windows file association handle .py */
+            command = g_strdup_printf("cmd.exe /c start \"\" \"%s/browser.py\" \"%s\"", dir, url);
         } else {
-            command = g_strdup_printf("cmd.exe /c start python \"%s/browser.py\"", dir);
+            command = g_strdup_printf("cmd.exe /c start \"\" \"%s/browser.py\"", dir);
         }
         g_spawn_command_line_async(command, NULL);
         append_text("Opening browser...");
