@@ -2,6 +2,7 @@
 virtualos
 virtualos.exe
 *.o
+build/
 
 # Python cache
 __pycache__/
@@ -15,5 +16,8 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Local secrets
+# Local secrets — NEVER commit this
 .env
+
+# Test scripts
+test_keys.py

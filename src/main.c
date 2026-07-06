@@ -65,7 +65,7 @@ static gboolean suppress_open_once = FALSE;
 /* ── Forward declarations */
 static void open_desktop_item(GtkButton *button, gpointer data);
 static void open_folder_window(const char *virtual_path);
-static void open_ai_prompt(void);
+static void open_gemini_prompt(void);
 static const char *icon_for_name(const char *name, gboolean is_dir);
 static void populate_folder(FolderCtx *ctx, const char *query);
 
@@ -216,32 +216,10 @@ static void apply_css(void)
         ".folder-item { border: 1px solid rgba(0,0,0,0.12); border-radius: 8px; "
         "               background: white; }"
         ".folder-item:hover { background: #f0f4ff; border-color: #4f80ff; }"
-        /* Desktop search bar inside taskbar */
-        ".desktop-search { border-radius: 18px; "
-        "                  background: rgba(255,255,255,0.10); "
-        "                  border: 1px solid rgba(255,255,255,0.22); "
-        "                  color: white; font-size: 13px; }"
-        /* Bottom taskbar — slim dark strip */
-        ".taskbar { background: rgba(15,15,20,0.92); "
-        "           border-top: 1px solid rgba(255,255,255,0.10); }"
-        /* Taskbar buttons */
-        ".taskbar-btn { background: rgba(255,255,255,0.08); "
-        "               border-radius: 8px; color: white; "
-        "               font-size: 13px; font-weight: 500; "
-        "               border: 1px solid rgba(255,255,255,0.15); }"
-        ".taskbar-btn:hover { background: rgba(255,255,255,0.20); }"
-        ".taskbar-btn:active { background: rgba(255,255,255,0.30); }"
-        /* Terminal Styling (Hacker/Modern Dark Mode) */
-        ".term-window { background: #0d1117; }"
-        ".term-text { background: #0d1117; color: #c9d1d9; font-family: 'Consolas', 'Courier New', monospace; font-size: 14.5px; padding: 16px; }"
-        ".term-entry { background: #161b22; color: #58a6ff; border: 1px solid #30363d; border-radius: 8px; padding: 10px 14px; font-family: 'Consolas', 'Courier New', monospace; font-size: 15px; margin: 8px; }"
-        ".term-entry:focus { border-color: #58a6ff; }"
-        ".term-ai-panel { background: #161b22; border-left: 1px solid #30363d; padding: 16px; }"
-        ".term-ai-title { font-weight: 800; color: #a371f7; font-size: 18px; margin-bottom: 12px; }"
-        ".term-ai-text { background: #0d1117; color: #e6edf3; font-family: 'Segoe UI', sans-serif; font-size: 14px; padding: 12px; border-radius: 8px; border: 1px solid #30363d; }"
-        ".term-ai-btn { background: #a371f7; color: white; border-radius: 8px; font-weight: bold; border: none; padding: 8px 16px; margin-left: 8px; }"
-        ".term-ai-btn:hover { background: #bc8cff; }"
-        ".term-ai-btn:active { background: #8957e5; }");
+        /* Desktop search bar */
+        ".desktop-search { border-radius: 20px; padding: 4px 12px; "
+        "                  background: rgba(255,255,255,0.85); "
+        "                  border: 1px solid rgba(0,0,0,0.18); }");
 
     gtk_style_context_add_provider_for_display(
         gdk_display_get_default(),
@@ -418,36 +396,39 @@ static void open_file_window(const char *virtual_path)
     g_free(title);
 }
 
-static void on_ai_prompt_run(GtkWidget *button, gpointer data)
-{
+
+
+static void on_gemini_prompt_run(GtkWidget *button, gpointer data) {
     GtkWidget *entry = data;
     const char *prompt = gtk_editable_get_text(GTK_EDITABLE(entry));
-    if (prompt && prompt[0] != '\0') {
+    if (prompt && *prompt) {
         char *stderr_buf = NULL;
-        char *response = run_ai_api(prompt, &stderr_buf);
-        if (response) {
+        char *response = run_gemini_api(prompt, &stderr_buf);
+        char *output = response ? response : stderr_buf;
+        
+        if (output && *output) {
             GtkWidget *win = gtk_window_new();
-            gtk_window_set_default_size(GTK_WINDOW(win), 400, 300);
-            gtk_window_set_title(GTK_WINDOW(win), "AI Response");
-
+            gtk_window_set_title(GTK_WINDOW(win), "Gemini Response");
+            gtk_window_set_default_size(GTK_WINDOW(win), 500, 400);
             GtkWidget *scroll = gtk_scrolled_window_new();
             gtk_widget_set_vexpand(scroll, TRUE);
             gtk_window_set_child(GTK_WINDOW(win), scroll);
-
-            GtkWidget *tv = gtk_text_view_new();
-            gtk_text_view_set_editable(GTK_TEXT_VIEW(tv), FALSE);
-            gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(tv), GTK_WRAP_WORD_CHAR);
-            gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(tv)), response, -1);
-            gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), tv);
-            
+            GtkWidget *label = gtk_label_new(output);
+            gtk_label_set_wrap(GTK_LABEL(label), TRUE);
+            gtk_label_set_selectable(GTK_LABEL(label), TRUE);
+            gtk_widget_set_margin_start(label, 12);
+            gtk_widget_set_margin_end(label, 12);
+            gtk_widget_set_margin_top(label, 12);
+            gtk_widget_set_margin_bottom(label, 12);
+            gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), label);
             gtk_window_present(GTK_WINDOW(win));
-            g_free(response);
         } else {
-            GtkAlertDialog *dialog = gtk_alert_dialog_new("AI Error: No response received.");
-            gtk_alert_dialog_show(dialog, GTK_WINDOW(gtk_widget_get_root(button)));
+            GtkAlertDialog *dialog = gtk_alert_dialog_new("Gemini Error: No response received.");
+            gtk_alert_dialog_show(dialog, NULL);
             g_object_unref(dialog);
         }
         
+        g_free(response);
         g_free(stderr_buf);
     }
     GtkWidget *window = gtk_widget_get_ancestor(entry, GTK_TYPE_WINDOW);
@@ -456,28 +437,26 @@ static void on_ai_prompt_run(GtkWidget *button, gpointer data)
     }
 }
 
-static void open_ai_prompt(void)
+static void open_gemini_prompt(void)
 {
     GtkWidget *win = gtk_window_new();
-    gtk_window_set_title(GTK_WINDOW(win), "AI Prompt");
+    gtk_window_set_title(GTK_WINDOW(win), "Gemini Prompt");
     gtk_window_set_default_size(GTK_WINDOW(win), 400, 100);
-
-    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-    gtk_widget_set_margin_start(box, 10);
-    gtk_widget_set_margin_end(box, 10);
-    gtk_widget_set_margin_top(box, 10);
-    gtk_widget_set_margin_bottom(box, 10);
+    
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_set_margin_start(box, 12);
+    gtk_widget_set_margin_end(box, 12);
+    gtk_widget_set_margin_top(box, 12);
+    gtk_widget_set_margin_bottom(box, 12);
     gtk_window_set_child(GTK_WINDOW(win), box);
-
+    
     GtkWidget *entry = gtk_entry_new();
-    gtk_entry_set_placeholder_text(GTK_ENTRY(entry), "Enter AI prompt...");
-    gtk_widget_set_hexpand(entry, TRUE);
+    gtk_entry_set_placeholder_text(GTK_ENTRY(entry), "Enter Gemini prompt...");
     gtk_box_append(GTK_BOX(box), entry);
-
+    
     GtkWidget *run_btn = gtk_button_new_with_label("Run");
-    g_signal_connect(run_btn, "clicked", G_CALLBACK(on_ai_prompt_run), entry);
-    g_signal_connect(entry, "activate", G_CALLBACK(on_ai_prompt_run), entry);
-
+    g_signal_connect(run_btn, "clicked", G_CALLBACK(on_gemini_prompt_run), entry);
+    g_signal_connect(entry, "activate", G_CALLBACK(on_gemini_prompt_run), entry);
     gtk_box_append(GTK_BOX(box), run_btn);
     
     gtk_window_present(GTK_WINDOW(win));
@@ -497,8 +476,8 @@ static void open_desktop_item(GtkButton *button, gpointer data)
     virtual_path = data;
     real_path = real_path_from_virtual(virtual_path);
 
-    if (strcmp(virtual_path, "/ai") == 0) {
-        open_ai_prompt();
+    if (strcmp(virtual_path, "/gemini") == 0) {
+        open_gemini_prompt();
         g_free(real_path);
         return;
     }
@@ -873,14 +852,13 @@ static void drag_end(GtkGestureDrag *gesture,
     target_col = ((int)x - 26 + 70) / 140;
     if (target_col < 0) target_col = 0;
 
-    /* Icons now start at y=20 (top of desktop), grid step = 120 */
-    target_row = ((int)y - 20 + 60) / 120;
+    target_row = ((int)y - 112 + 60) / 120;
     if (target_row < 0) target_row = 0;
 
     radius = 0;
     found = 0;
     final_x = 26 + target_col * 140;
-    final_y = 20 + target_row * 120;
+    final_y = 112 + target_row * 120;
 
     while(!found && radius < 20) {
         for (int dc = -radius; dc <= radius && !found; dc++) {
@@ -890,7 +868,7 @@ static void drag_end(GtkGestureDrag *gesture,
                     int r = target_row + dr;
                     if (c >= 0 && r >= 0) {
                         int test_x = 26 + c * 140;
-                        int test_y = 20 + r * 120;
+                        int test_y = 112 + r * 120;
 
                         gboolean occupied = FALSE;
                         GList *l;
@@ -1027,7 +1005,6 @@ static void refresh_desktop_icons(void)
     real_dir = real_path_from_virtual(desktop_path);
     dir = g_dir_open(real_dir, 0, NULL);
 
-    /* x,y are the starting grid coordinates for new icon placement */
     x = 26;
     y = 112;
 
@@ -1071,8 +1048,7 @@ static void refresh_desktop_icons(void)
             while(1)
             {
                 int try_x = 26 + target_c * 140;
-                /* Icons start at y=20 (top), step 120px per row */
-                int try_y = 20 + target_r * 120;
+                int try_y = 112 + target_r * 120;
                 gboolean collision = FALSE;
 
                 // Check stored positions
@@ -1141,13 +1117,11 @@ static void activate(GtkApplication *app, gpointer user_data)
 {
     GtkWidget *window;
     GtkWidget *background;
+    GtkWidget *bar;
+    GtkWidget *gemini_button;
     GtkWidget *image;
     GtkGesture *gesture;
     GtkWidget *desktop_search;
-    /* Taskbar widgets */
-    GtkWidget *taskbar;
-    GtkWidget *terminal_btn;
-    GtkWidget *ai_button;
 
     icon_positions = g_hash_table_new_full(
         g_str_hash,
@@ -1158,125 +1132,61 @@ static void activate(GtkApplication *app, gpointer user_data)
 
     window = gtk_application_window_new(app);
     gtk_window_set_title(GTK_WINDOW(window), "Virtual Operating System");
-    gtk_window_fullscreen(GTK_WINDOW(window));
+    gtk_window_maximize(GTK_WINDOW(window));
 
-    /* ── Layout: simple vertical GtkBox ──
-     *   ┌──────────────────────────────────┐
-     *   │  GtkFixed (desktop)  vexpand=T   │  ← wallpaper + draggable icons
-     *   │                                  │
-     *   ├──────────────────────────────────┤
-     *   │  GtkBox (taskbar)   height=44    │  ← Terminal | Search | AI
-     *   └──────────────────────────────────┘
-     */
-    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    gtk_window_set_child(GTK_WINDOW(window), vbox);
-
-    /* Desktop canvas — takes all remaining space */
     desktop = gtk_fixed_new();
-    gtk_widget_set_hexpand(desktop, TRUE);
-    gtk_widget_set_vexpand(desktop, TRUE);
-    gtk_box_append(GTK_BOX(vbox), desktop);
+    gtk_window_set_child(GTK_WINDOW(window), desktop);
 
-    /* ── Wallpaper (CSS based so it doesn't force a minimum window size) ── */
-    char *cwd = g_get_current_dir();
-    /* On Windows, convert \ to / for the file:// URL */
-    for (char *p = cwd; *p; p++) {
-        if (*p == '\\') *p = '/';
-    }
-    char *bg_css = g_strdup_printf(
-        ".desktop-bg { background-image: url('file:///%s/assets/wallpaper.png'); "
-        "background-size: cover; background-position: center; }", cwd);
-    GtkCssProvider *bg_provider = gtk_css_provider_new();
-    gtk_css_provider_load_from_string(bg_provider, bg_css);
-    gtk_style_context_add_provider_for_display(
-        gdk_display_get_default(),
-        GTK_STYLE_PROVIDER(bg_provider),
-        GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-    g_free(bg_css);
-    g_free(cwd);
-    g_object_unref(bg_provider);
-    
-    gtk_widget_add_css_class(desktop, "desktop-bg");
+    background = gtk_picture_new_for_filename("assets/wallpaper.png");
+    gtk_picture_set_content_fit(GTK_PICTURE(background), GTK_CONTENT_FIT_COVER);
+    gtk_widget_set_size_request(background, 1920, 1080);
+    gtk_fixed_put(GTK_FIXED(desktop), background, 0, 0);
 
-    /* ── Desktop Search Context (heap-allocated, lives for app lifetime) ──
-     * Uses Bubble Sort + Binary Search to locate files as the user types. */
+    /* ── Desktop Search Bar (centred at top) ──────────────────────────────
+     * Typing here uses Bubble Sort + Binary Search to find matching files.
+     * Results open in a folder window for single-click access. */
+    desktop_search = gtk_search_entry_new();
+    gtk_search_entry_set_placeholder_text(GTK_SEARCH_ENTRY(desktop_search),
+                                          "Search files & folders...");
+    gtk_widget_set_size_request(desktop_search, 360, 38);
+    gtk_widget_add_css_class(desktop_search, "desktop-search");
+    /* Centre the search bar horizontally at the top (y=14) */
+    gtk_fixed_put(GTK_FIXED(desktop), desktop_search, 760, 14);
+
+    /* Allocate the desktop search context (heap-allocated, lives for app lifetime) */
     desktop_search_ctx = (FolderCtx *)malloc(sizeof(FolderCtx));
     if (desktop_search_ctx) {
         g_strlcpy(desktop_search_ctx->path, "/", sizeof(desktop_search_ctx->path));
         desktop_search_ctx->sort_asc = 1;
         desktop_search_ctx->history  = NULL;
-        desktop_search_ctx->flowbox  = NULL;
-        desktop_search_ctx->search_entry = NULL;
+        desktop_search_ctx->flowbox  = NULL; /* Not used for desktop search */
+        desktop_search_ctx->search_entry = desktop_search;
         file_array_init(&desktop_search_ctx->sorted_files);
     }
+    g_signal_connect(desktop_search, "search-changed",
+                     G_CALLBACK(on_desktop_search_changed), NULL);
 
-    /* terminal_icon (hidden — kept for API compatibility only) */
+    gemini_button = gtk_button_new_with_label("Gemini");
+    g_signal_connect(gemini_button, "clicked", G_CALLBACK(open_gemini_prompt), NULL);
+    gtk_widget_set_size_request(gemini_button, 90, 42);
+    gtk_fixed_put(GTK_FIXED(desktop), gemini_button, 1810, 20);
+
     image = gtk_picture_new_for_filename("assets/terminal.png");
     terminal_icon = gtk_button_new();
     gtk_button_set_child(GTK_BUTTON(terminal_icon), image);
+    gtk_widget_set_size_request(terminal_icon, 80, 80);
+    gtk_widget_add_css_class(terminal_icon, "flat");
+    gtk_fixed_put(GTK_FIXED(desktop), terminal_icon, 20, 20);
+
     gesture = gtk_gesture_click_new();
     g_signal_connect(gesture, "pressed", G_CALLBACK(open_terminal), NULL);
     gtk_widget_add_controller(terminal_icon, GTK_EVENT_CONTROLLER(gesture));
 
-    /* ═══════════════════════════════════════════════════════════════
-     *  TASKBAR — second child of the vbox, always at the very bottom.
-     *  Layout:  [Terminal]  <spacer>  [Search...]  <spacer>  [AI]
-     * ═══════════════════════════════════════════════════════════════ */
-    taskbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-    gtk_widget_add_css_class(taskbar, "taskbar");
-    gtk_widget_set_size_request(taskbar, -1, 44);
-
-    /* LEFT: Terminal */
-    terminal_btn = gtk_button_new_with_label("Terminal");
-    gtk_widget_add_css_class(terminal_btn, "taskbar-btn");
-    gtk_widget_set_size_request(terminal_btn, 110, 32);
-    gtk_widget_set_valign(terminal_btn, GTK_ALIGN_CENTER);
-    gtk_widget_set_margin_start(terminal_btn, 14);
-    g_signal_connect(terminal_btn, "clicked", G_CALLBACK(open_terminal), NULL);
-    gtk_box_append(GTK_BOX(taskbar), terminal_btn);
-
-    /* Spacer */
-    GtkWidget *spacer1 = gtk_label_new("");
-    gtk_widget_set_hexpand(spacer1, TRUE);
-    gtk_box_append(GTK_BOX(taskbar), spacer1);
-
-    /* CENTRE: Search bar (Bubble Sort + Binary Search) */
-    desktop_search = gtk_search_entry_new();
-    gtk_search_entry_set_placeholder_text(GTK_SEARCH_ENTRY(desktop_search),
-                                          "Search files & folders...");
-    gtk_widget_set_size_request(desktop_search, 320, 32);
-    gtk_widget_set_valign(desktop_search, GTK_ALIGN_CENTER);
-    gtk_widget_add_css_class(desktop_search, "desktop-search");
-    if (desktop_search_ctx)
-        desktop_search_ctx->search_entry = desktop_search;
-    g_signal_connect(desktop_search, "search-changed",
-                     G_CALLBACK(on_desktop_search_changed), NULL);
-    gtk_box_append(GTK_BOX(taskbar), desktop_search);
-
-    /* Spacer */
-    GtkWidget *spacer2 = gtk_label_new("");
-    gtk_widget_set_hexpand(spacer2, TRUE);
-    gtk_box_append(GTK_BOX(taskbar), spacer2);
-
-    /* RIGHT: AI */
-    ai_button = gtk_button_new_with_label("AI");
-    gtk_widget_add_css_class(ai_button, "taskbar-btn");
-    gtk_widget_set_size_request(ai_button, 110, 32);
-    gtk_widget_set_valign(ai_button, GTK_ALIGN_CENTER);
-    gtk_widget_set_margin_end(ai_button, 14);
-    g_signal_connect(ai_button, "clicked", G_CALLBACK(open_ai_prompt), NULL);
-    gtk_box_append(GTK_BOX(taskbar), ai_button);
-
-    /* Add taskbar as the second child of vbox — always at bottom */
-    gtk_box_append(GTK_BOX(vbox), taskbar);
-
-    /* ── Refresh desktop icons — they start from y=20 at the top ── */
     set_desktop_refresh_callback(refresh_desktop_icons);
     refresh_desktop_icons();
 
     gtk_window_present(GTK_WINDOW(window));
 }
-
 
 int main(int argc, char *argv[])
 {
