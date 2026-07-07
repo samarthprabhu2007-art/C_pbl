@@ -6,10 +6,51 @@
 
 #define MAX_PATH_TEXT 512
 
+typedef struct {
+    char default_name[32];
+    char current_name[32];
+    char description[128];
+    char usage[64];
+    char category[32];
+    char example[256];
+} CommandDef;
+
+static CommandDef terminal_commands[] = {
+    {"help", "help", "Show all available commands", "help", "BASIC", "Example:\n> help\n=== Virtual OS Terminal - Help ===\n..."},
+    {"pwd", "pwd", "Print working directory", "pwd", "NAVIGATION", "Example:\n> pwd\n/home/samar"},
+    {"ls", "ls", "List files and folders", "ls [dirname]", "NAVIGATION", "Example:\n> ls\nDocuments\nImages\nnotes.txt"},
+    {"cd", "cd", "Change directory", "cd <path>", "NAVIGATION", "Example:\n> cd Documents\n> pwd\n/home/samar/Documents"},
+    {"touch", "touch", "Create a new empty file", "touch <name>", "FILE MANAGEMENT", "Example:\n> touch hello.txt\n(Creates hello.txt in the current directory)"},
+    {"mkdir", "mkdir", "Create a new folder", "mkdir <name>", "FILE MANAGEMENT", "Example:\n> mkdir Projects\n(Creates a folder named Projects)"},
+    {"rm", "rm", "Delete a file", "rm <name>", "FILE MANAGEMENT", "Example:\n> rm hello.txt\n(Permanently deletes hello.txt)"},
+    {"rmdir", "rmdir", "Delete an empty folder", "rmdir <name>", "FILE MANAGEMENT", "Example:\n> rmdir Projects\n(Deletes the folder Projects if it is empty)"},
+    {"cat", "cat", "Display file contents", "cat <file>", "READ & WRITE", "Example:\n> cat notes.txt\nThis is a sample note."},
+    {"write", "write", "Write text to file", "write <file> <text>", "READ & WRITE", "Example:\n> write notes.txt Hello World!\n(Overwrites notes.txt with 'Hello World!')"},
+    {"append", "append", "Append text to file", "append <file> <text>", "READ & WRITE", "Example:\n> append notes.txt Bye!\n(Adds 'Bye!' to the end of notes.txt)"},
+    {"cp", "cp", "Copy a file", "cp <src> <dest>", "COPY & MOVE", "Example:\n> cp notes.txt backup.txt\n(Copies notes.txt to backup.txt)"},
+    {"mv", "mv", "Move or rename a file", "mv <src> <dest>", "COPY & MOVE", "Example:\n> mv old.txt new.txt\n(Renames old.txt to new.txt)"},
+    {"ai", "ai", "Ask AI a question", "ai <prompt>", "AI", "Example:\n> ai Create a python script that prints hello\n(AI will respond and may execute commands)"},
+    {"whoami", "whoami", "Show current user", "whoami", "SYSTEM", "Example:\n> whoami\nsamarth"},
+    {"date", "date", "Show current date", "date", "SYSTEM", "Example:\n> date\nJul 06 2026"},
+    {"clear", "clear", "Clear the terminal", "clear", "SYSTEM", "Example:\n> clear\n(Clears the terminal screen)"},
+    {"echo", "echo", "Print text", "echo <text>", "SYSTEM", "Example:\n> echo Hello World!\nHello World!"},
+    {"browse", "browse", "Open web browser", "browse [url]", "SYSTEM", "Example:\n> browse google.com\n(Opens browser at google.com)"}
+};
+static const int num_terminal_commands = sizeof(terminal_commands) / sizeof(CommandDef);
+
 static GtkTextBuffer *buffer;
 static GtkTextBuffer *ai_chat_buffer;
 static char cwd[MAX_PATH_TEXT] = "/";
 static void (*desktop_refresh_callback)(void) = NULL;
+
+#define MAX_CUSTOM_COMMANDS 50
+typedef struct {
+    char name[64];
+    char definition[256];
+    char code[2048];
+} CustomCommand;
+static CustomCommand custom_commands[MAX_CUSTOM_COMMANDS];
+static int num_custom_commands = 0;
 
 void set_desktop_refresh_callback(void (*callback)(void))
 {
@@ -577,52 +618,52 @@ static void command_copy_or_move(const char *args, gboolean move)
     g_free(target_path);
 }
 
-char *run_gemini_api(const char *prompt, char **error_out)
+char *run_ai_api(const char *prompt, char **error_out)
 {
-    char *home = get_virtual_home();
-    char *proj_dir = g_path_get_dirname(home);
-    char *api_script = g_build_filename(proj_dir, "gemini_api.py", NULL);
-    g_free(proj_dir);
-    g_free(home);
-
-    char *stdout_buf = NULL;
-    char *stderr_buf = NULL;
+    char *escaped_prompt;
+    char *command;
+    char *standard_output = NULL;
+    char *standard_error = NULL;
     int exit_status;
-    GError *error = NULL;
+    char *dir;
 
-    // Try python first
-    char *argv_python[] = {"python", api_script, (char *)prompt, NULL};
-    gboolean success = g_spawn_sync(NULL, argv_python, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL, &stdout_buf, &stderr_buf, &exit_status, &error);
-
-    if (!success) {
-        if (error) {
-            g_clear_error(&error);
-        }
-        // Try python3 if python failed
-        char *argv_python3[] = {"python3", api_script, (char *)prompt, NULL};
-        success = g_spawn_sync(NULL, argv_python3, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL, &stdout_buf, &stderr_buf, &exit_status, &error);
+    if(error_out != NULL)
+    {
+        *error_out = NULL;
     }
 
-    g_free(api_script);
-
-    if (success) {
-        if (error_out && stderr_buf && stderr_buf[0] != '\0') {
-            *error_out = stderr_buf;
-        } else {
-            g_free(stderr_buf);
-        }
-        return stdout_buf;
-    } else {
-        if (error_out) {
-            *error_out = g_strdup(error ? error->message : "Unknown spawn error");
-        }
-        if (error) {
-            g_clear_error(&error);
-        }
-        g_free(stdout_buf);
-        g_free(stderr_buf);
+    if(prompt == NULL || prompt[0] == '\0')
+    {
         return NULL;
     }
+
+    escaped_prompt = g_shell_quote(prompt);
+    dir = g_get_current_dir();
+    
+    /* Using Windows python or python3 command. */
+    command = g_strdup_printf("python \"%s/ai_api.py\" %s", dir, escaped_prompt);
+    
+    g_free(dir);
+    g_free(escaped_prompt);
+
+    g_spawn_command_line_sync(command,
+                              &standard_output,
+                              &standard_error,
+                              &exit_status,
+                              NULL);
+
+    g_free(command);
+
+    if(error_out != NULL && standard_error != NULL && standard_error[0] != '\0')
+    {
+        *error_out = g_strdup(standard_error);
+    }
+
+    if (standard_error != NULL) {
+        g_free(standard_error);
+    }
+
+    return standard_output;
 }
 
 static void execute_command_string(const char *input_line, gboolean is_from_ai)
@@ -655,129 +696,197 @@ static void execute_command_string(const char *input_line, gboolean is_from_ai)
         return;
     }
 
-    if (is_from_ai) {
-        if (strcmp(cmd, "help") != 0 && strcmp(cmd, "clear") != 0 && strcmp(cmd, "whoami") != 0 && 
-            strcmp(cmd, "date") != 0 && strcmp(cmd, "echo") != 0 && strcmp(cmd, "pwd") != 0 && 
-            strcmp(cmd, "ls") != 0 && strcmp(cmd, "cd") != 0 && strcmp(cmd, "touch") != 0 && 
-            strcmp(cmd, "tocuh") != 0 && strcmp(cmd, "mkdir") != 0 && strcmp(cmd, "cat") != 0 && 
-            strcmp(cmd, "write") != 0 && strcmp(cmd, "append") != 0 && strcmp(cmd, "cp") != 0 && 
-            strcmp(cmd, "mv") != 0 && strcmp(cmd, "rm") != 0 && strcmp(cmd, "rmdir") != 0) {
-            return;
+    char *cmd_id = NULL;
+    for (int i = 0; i < num_terminal_commands; i++) {
+        if (strcmp(cmd, terminal_commands[i].current_name) == 0) {
+            cmd_id = terminal_commands[i].default_name;
+            break;
         }
+    }
+
+    if (cmd_id == NULL) {
+        for (int i = 0; i < num_custom_commands; i++) {
+            if (strcmp(cmd, custom_commands[i].name) == 0) {
+                if (is_from_ai) {
+                    gchar *ai_msg = g_strdup_printf("> AI executing custom command: %s", input_line);
+                    append_text(ai_msg);
+                    g_free(ai_msg);
+                }
+                
+                int argc = 0;
+                char **argv = NULL;
+                if (args != NULL && args[0] != '\0') {
+                    g_shell_parse_argv(args, &argc, &argv, NULL);
+                }
+
+                char *var_names[20];
+                int num_vars = 0;
+                char **def_tokens = g_strsplit(custom_commands[i].definition, " ", -1);
+                for (int k = 1; def_tokens[k] != NULL && num_vars < 20; k++) {
+                    char *token = def_tokens[k];
+                    if (token[0] == '[' && token[strlen(token)-1] == ']') {
+                        char *var_name = g_strndup(token + 1, strlen(token) - 2);
+                        var_names[num_vars] = var_name;
+                        num_vars++;
+                    }
+                }
+                g_strfreev(def_tokens);
+
+                gboolean validation_failed = FALSE;
+                for (int k = 0; k < num_vars; k++) {
+                    if (k >= argc) {
+                        gchar *err = g_strdup_printf("Error: Missing argument for '%s'", var_names[k]);
+                        append_text(err);
+                        g_free(err);
+                        validation_failed = TRUE;
+                        break;
+                    }
+                }
+                
+                if (validation_failed) {
+                    for (int k = 0; k < num_vars; k++) g_free(var_names[k]);
+                    if (argv) g_strfreev(argv);
+                    return;
+                }
+
+                char **lines = g_strsplit(custom_commands[i].code, "\n", -1);
+                for (int j = 0; lines[j] != NULL; j++) {
+                    char *line = trim(lines[j]);
+                    if (line[0] != '\0') {
+                        char *processed = g_strdup(line);
+                        for (int k = 0; k < num_vars && k < argc; k++) {
+                            char *pattern = g_strdup_printf("\\b%s\\b", var_names[k]);
+                            GRegex *regex = g_regex_new(pattern, 0, 0, NULL);
+                            char *new_proc = g_regex_replace_literal(regex, processed, -1, 0, argv[k], 0, NULL);
+                            g_free(processed);
+                            processed = new_proc;
+                            g_regex_unref(regex);
+                            g_free(pattern);
+                        }
+                        
+                        if (!is_from_ai) {
+                            gchar *msg = g_strdup_printf("> [macro %s]: %s", custom_commands[i].name, processed);
+                            append_text(msg);
+                            g_free(msg);
+                        }
+                        execute_command_string(processed, is_from_ai);
+                        g_free(processed);
+                    }
+                }
+                
+                for (int k = 0; k < num_vars; k++) g_free(var_names[k]);
+                if (argv) g_strfreev(argv);
+                g_strfreev(lines);
+                return;
+            }
+        }
+        if (!is_from_ai) {
+            append_text("Command not found");
+        }
+        return;
+    }
+
+    if (is_from_ai) {
         gchar *ai_msg = g_strdup_printf("> AI executing: %s", input_line);
         append_text(ai_msg);
         g_free(ai_msg);
     }
 
-    if(strcmp(cmd, "help") == 0)
+    if(strcmp(cmd_id, "help") == 0)
     {
         append_text("");
         append_text("=== Virtual OS Terminal - Help ===");
         append_text("");
-        append_text("  NAVIGATION");
-        append_text("    pwd              Show current directory");
-        append_text("    ls [path]        List files in directory");
-        append_text("    cd <path>        Change directory");
-        append_text("");
-        append_text("  FILE MANAGEMENT");
-        append_text("    touch <name>     Create a new empty file");
-        append_text("    mkdir <name>     Create a new folder");
-        append_text("    rm <name>        Delete a file");
-        append_text("    rmdir <name>     Delete an empty folder");
-        append_text("");
-        append_text("  READ & WRITE");
-        append_text("    cat <file>       Display file contents");
-        append_text("    write <file> <text>   Write text to file");
-        append_text("    append <file> <text>  Append text to file");
-        append_text("");
-        append_text("  COPY & MOVE");
-        append_text("    cp <src> <dest>  Copy a file");
-        append_text("    mv <src> <dest>  Move or rename a file");
-        append_text("");
-        append_text("  AI");
-        append_text("    gemini <prompt>  Ask Gemini AI a question");
-        append_text("");
-        append_text("  SYSTEM");
-        append_text("    whoami           Show current user");
-        append_text("    date             Show current date");
-        append_text("    clear            Clear the terminal");
-        append_text("    echo <text>      Print text");
+        
+        char current_cat[32] = "";
+        for (int i = 0; i < num_terminal_commands; i++) {
+            if (strcmp(current_cat, terminal_commands[i].category) != 0) {
+                if (i != 0) append_text("");
+                gchar *cat_hdr = g_strdup_printf("  %s", terminal_commands[i].category);
+                append_text(cat_hdr);
+                g_free(cat_hdr);
+                g_strlcpy(current_cat, terminal_commands[i].category, sizeof(current_cat));
+            }
+            gchar *line = g_strdup_printf("    %-16s %s", terminal_commands[i].current_name, terminal_commands[i].description);
+            append_text(line);
+            g_free(line);
+        }
         append_text("");
         append_text("=================================");
         append_text("");
     }
-    else if(strcmp(cmd, "clear") == 0)
+    else if(strcmp(cmd_id, "clear") == 0)
     {
         gtk_text_buffer_set_text(buffer, "", -1);
     }
-    else if(strcmp(cmd, "whoami") == 0)
+    else if(strcmp(cmd_id, "whoami") == 0)
     {
         append_text("samarth");
     }
-    else if(strcmp(cmd, "date") == 0)
+    else if(strcmp(cmd_id, "date") == 0)
     {
         append_text(__DATE__);
     }
-    else if(strcmp(cmd, "echo") == 0)
+    else if(strcmp(cmd_id, "echo") == 0)
     {
         append_text(args == NULL ? "" : args);
     }
-    else if(strcmp(cmd, "pwd") == 0)
+    else if(strcmp(cmd_id, "pwd") == 0)
     {
         command_pwd();
     }
-    else if(strcmp(cmd, "ls") == 0)
+    else if(strcmp(cmd_id, "ls") == 0)
     {
         command_ls(args);
     }
-    else if(strcmp(cmd, "cd") == 0)
+    else if(strcmp(cmd_id, "cd") == 0)
     {
         command_cd(args);
     }
-    else if(strcmp(cmd, "touch") == 0 || strcmp(cmd, "tocuh") == 0)
+    else if(strcmp(cmd_id, "touch") == 0)
     {
         command_touch(args);
     }
-    else if(strcmp(cmd, "mkdir") == 0)
+    else if(strcmp(cmd_id, "mkdir") == 0)
     {
         command_mkdir(args);
     }
-    else if(strcmp(cmd, "cat") == 0)
+    else if(strcmp(cmd_id, "cat") == 0)
     {
         command_cat(args);
     }
-    else if(strcmp(cmd, "write") == 0)
+    else if(strcmp(cmd_id, "write") == 0)
     {
         command_write(args, FALSE);
     }
-    else if(strcmp(cmd, "append") == 0)
+    else if(strcmp(cmd_id, "append") == 0)
     {
         command_write(args, TRUE);
     }
-    else if(strcmp(cmd, "cp") == 0)
+    else if(strcmp(cmd_id, "cp") == 0)
     {
         command_copy_or_move(args, FALSE);
     }
-    else if(strcmp(cmd, "mv") == 0)
+    else if(strcmp(cmd_id, "mv") == 0)
     {
         command_copy_or_move(args, TRUE);
     }
-    else if(strcmp(cmd, "rm") == 0)
+    else if(strcmp(cmd_id, "rm") == 0)
     {
         command_rm(args);
     }
-    else if(strcmp(cmd, "rmdir") == 0)
+    else if(strcmp(cmd_id, "rmdir") == 0)
     {
         command_rmdir(args);
     }
-    else if(strcmp(cmd, "gemini") == 0)
+    else if(strcmp(cmd_id, "ai") == 0)
     {
         if(args == NULL || trim(args)[0] == '\0') {
-            append_text("Usage: gemini <prompt>");
+            append_text("Usage: ai <prompt>");
         } else {
             char *stderr_buf = NULL;
             append_text("Thinking...");
-            char *response = run_gemini_api(args, &stderr_buf);
+            char *response = run_ai_api(args, &stderr_buf);
             if (response) {
                 if (response[0] != '\0') {
                     append_text(response);
@@ -799,15 +908,14 @@ static void execute_command_string(const char *input_line, gboolean is_from_ai)
                 g_free(stderr_buf);
             }
             if (!response && !stderr_buf) {
-                append_text("Failed to execute Gemini script.");
+                append_text("Failed to execute AI script.");
             }
         }
     }
-    else
+    else if(strcmp(cmd_id, "browse") == 0)
     {
-        if (!is_from_ai) {
-            append_text("Command not found");
-        }
+        open_browser();
+        append_text("Opening browser...");
     }
 }
 
@@ -822,7 +930,7 @@ static void process_command(GtkEntry *entry, gpointer data)
     gtk_editable_set_text(GTK_EDITABLE(entry), "");
 }
 
-static void on_terminal_gemini_prompt_run(GtkWidget *button, gpointer data) {
+static void on_terminal_ai_prompt_run(GtkWidget *button, gpointer data) {
     GtkWidget *entry = data;
     const char *prompt_ptr = gtk_editable_get_text(GTK_EDITABLE(entry));
     if (prompt_ptr && *prompt_ptr) {
@@ -838,10 +946,10 @@ static void on_terminal_gemini_prompt_run(GtkWidget *button, gpointer data) {
         gtk_editable_set_text(GTK_EDITABLE(entry), "Thinking...");
         gtk_widget_set_sensitive(entry, FALSE);
 
-        char *response = run_gemini_api(prompt, &stderr_buf);
+        char *response = run_ai_api(prompt, &stderr_buf);
         if (response && response[0] != '\0') {
             gtk_text_buffer_get_end_iter(ai_chat_buffer, &iter);
-            gtk_text_buffer_insert(ai_chat_buffer, &iter, "Gemini: ", -1);
+            gtk_text_buffer_insert(ai_chat_buffer, &iter, "AI: ", -1);
             gtk_text_buffer_insert(ai_chat_buffer, &iter, response, -1);
             gtk_text_buffer_insert(ai_chat_buffer, &iter, "\n\n", -1);
             
@@ -855,12 +963,12 @@ static void on_terminal_gemini_prompt_run(GtkWidget *button, gpointer data) {
             g_strfreev(lines);
         } else if (stderr_buf && stderr_buf[0] != '\0') {
             gtk_text_buffer_get_end_iter(ai_chat_buffer, &iter);
-            gtk_text_buffer_insert(ai_chat_buffer, &iter, "Gemini Error: ", -1);
+            gtk_text_buffer_insert(ai_chat_buffer, &iter, "AI Error: ", -1);
             gtk_text_buffer_insert(ai_chat_buffer, &iter, stderr_buf, -1);
             gtk_text_buffer_insert(ai_chat_buffer, &iter, "\n\n", -1);
         } else {
             gtk_text_buffer_get_end_iter(ai_chat_buffer, &iter);
-            gtk_text_buffer_insert(ai_chat_buffer, &iter, "Gemini: Error calling API\n\n", -1);
+            gtk_text_buffer_insert(ai_chat_buffer, &iter, "AI: Error calling API\n\n", -1);
         }
         
         gtk_editable_set_text(GTK_EDITABLE(entry), "");
@@ -873,8 +981,435 @@ static void on_terminal_gemini_prompt_run(GtkWidget *button, gpointer data) {
     }
 }
 
+static void save_commands(void) {
+    char *cwd_real = g_get_current_dir();
+    char *path = g_build_filename(cwd_real, ".virtualos_config", NULL);
+    FILE *f = g_fopen(path, "w");
+    if (f) {
+        for (int i = 0; i < num_terminal_commands; i++) {
+            fprintf(f, "ALIAS|%d|%s\n", i, terminal_commands[i].current_name);
+        }
+        fprintf(f, "CUSTOM_COUNT|%d\n", num_custom_commands);
+        for (int i = 0; i < num_custom_commands; i++) {
+            fprintf(f, "CMD_NAME|%s\n", custom_commands[i].name);
+            fprintf(f, "CMD_DEF|%s\n", custom_commands[i].definition);
+            fprintf(f, "CMD_CODE_START\n");
+            fprintf(f, "%s", custom_commands[i].code);
+            if (custom_commands[i].code[strlen(custom_commands[i].code)-1] != '\n') {
+                fprintf(f, "\n");
+            }
+            fprintf(f, "CMD_CODE_END\n");
+        }
+        fclose(f);
+    }
+    g_free(path);
+    g_free(cwd_real);
+}
+
+static void load_commands(void) {
+    char *cwd_real = g_get_current_dir();
+    char *path = g_build_filename(cwd_real, ".virtualos_config", NULL);
+    FILE *f = g_fopen(path, "r");
+    if (f) {
+        char line[2048];
+        while (fgets(line, sizeof(line), f)) {
+            line[strcspn(line, "\r\n")] = 0;
+            if (strncmp(line, "ALIAS|", 6) == 0) {
+                int idx;
+                char name[32];
+                if (sscanf(line + 6, "%d|%31s", &idx, name) == 2) {
+                    if (idx >= 0 && idx < num_terminal_commands) {
+                        g_strlcpy(terminal_commands[idx].current_name, name, sizeof(terminal_commands[idx].current_name));
+                    }
+                }
+            } else if (strncmp(line, "CUSTOM_COUNT|", 13) == 0) {
+                int count = 0;
+                sscanf(line + 13, "%d", &count);
+                num_custom_commands = 0;
+                for (int i = 0; i < count && i < MAX_CUSTOM_COMMANDS; i++) {
+                    if (fgets(line, sizeof(line), f) && strncmp(line, "CMD_NAME|", 9) == 0) {
+                        line[strcspn(line, "\r\n")] = 0;
+                        g_strlcpy(custom_commands[i].name, line + 9, sizeof(custom_commands[i].name));
+                    }
+                    if (fgets(line, sizeof(line), f) && strncmp(line, "CMD_DEF|", 8) == 0) {
+                        line[strcspn(line, "\r\n")] = 0;
+                        g_strlcpy(custom_commands[i].definition, line + 8, sizeof(custom_commands[i].definition));
+                    }
+                    if (fgets(line, sizeof(line), f) && strncmp(line, "CMD_CODE_START", 14) == 0) {
+                        custom_commands[i].code[0] = '\0';
+                        while (fgets(line, sizeof(line), f)) {
+                            if (strncmp(line, "CMD_CODE_END", 12) == 0) break;
+                            g_strlcat(custom_commands[i].code, line, sizeof(custom_commands[i].code));
+                        }
+                    }
+                    num_custom_commands++;
+                }
+            }
+        }
+        fclose(f);
+    }
+    g_free(path);
+    g_free(cwd_real);
+}
+
+static void show_help_gui_window(GtkWidget *button, gpointer data);
+
+static void on_custom_delete_clicked(GtkButton *btn, gpointer data) {
+    int idx = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(btn), "cmd_idx"));
+    GtkWidget *help_win = g_object_get_data(G_OBJECT(btn), "help_win");
+    
+    for (int i = idx; i < num_custom_commands - 1; i++) {
+        custom_commands[i] = custom_commands[i+1];
+    }
+    num_custom_commands--;
+    save_commands();
+    
+    gtk_window_destroy(GTK_WINDOW(help_win));
+    show_help_gui_window(NULL, NULL);
+}
+
+static void on_help_reset_confirm(GtkDialog *dialog, int response, gpointer data) {
+    if (response == GTK_RESPONSE_ACCEPT) {
+        for (int i = 0; i < num_terminal_commands; i++) {
+            g_strlcpy(terminal_commands[i].current_name, terminal_commands[i].default_name, sizeof(terminal_commands[i].current_name));
+        }
+        num_custom_commands = 0;
+        save_commands();
+        append_text("> All commands reset and custom commands deleted.");
+    }
+    gtk_window_destroy(GTK_WINDOW(dialog));
+}
+
+static void on_help_reset_clicked(GtkWidget *button, gpointer data) {
+    GtkWindow *parent = GTK_WINDOW(data);
+    GtkWidget *dialog = gtk_message_dialog_new(parent,
+                                               GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+                                               GTK_MESSAGE_WARNING,
+                                               GTK_BUTTONS_OK_CANCEL,
+                                               "Are you sure you want to reset all command aliases and delete all custom commands?");
+    g_signal_connect(dialog, "response", G_CALLBACK(on_help_reset_confirm), NULL);
+    gtk_window_present(GTK_WINDOW(dialog));
+}
+
+static void on_command_name_changed(GtkEditable *editable, gpointer user_data) {
+    int idx = GPOINTER_TO_INT(user_data);
+    const char *text = gtk_editable_get_text(editable);
+    if (text && text[0] != '\0') {
+        g_strlcpy(terminal_commands[idx].current_name, text, sizeof(terminal_commands[idx].current_name));
+        save_commands();
+    }
+}
+
+static gboolean help_filter_func(GtkListBoxRow *row, gpointer user_data) {
+    GtkSearchEntry *search_entry = GTK_SEARCH_ENTRY(user_data);
+    const char *search_text = gtk_editable_get_text(GTK_EDITABLE(search_entry));
+    if (!search_text || search_text[0] == '\0') {
+        return TRUE;
+    }
+    
+    int is_custom = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(row), "is_custom"));
+    int idx = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(row), "cmd_idx"));
+    
+    const char *cmd_name;
+    const char *cmd_desc;
+    
+    if (is_custom) {
+        cmd_name = custom_commands[idx].name;
+        cmd_desc = custom_commands[idx].code;
+    } else {
+        cmd_name = terminal_commands[idx].current_name;
+        cmd_desc = terminal_commands[idx].description;
+    }
+    
+    char *lower_search = g_utf8_strdown(search_text, -1);
+    char *lower_name = g_utf8_strdown(cmd_name, -1);
+    char *lower_desc = g_utf8_strdown(cmd_desc, -1);
+    
+    gboolean match = (strstr(lower_name, lower_search) != NULL) || (strstr(lower_desc, lower_search) != NULL);
+    
+    g_free(lower_search);
+    g_free(lower_name);
+    g_free(lower_desc);
+    
+    return match;
+}
+
+static void on_help_search_changed(GtkSearchEntry *entry, gpointer user_data) {
+    GtkListBox *listbox = GTK_LIST_BOX(user_data);
+    gtk_list_box_invalidate_filter(listbox);
+}
+
+static void show_help_gui_window(GtkWidget *button, gpointer data);
+
+static void on_add_param_clicked(GtkButton *btn, gpointer data) {
+    GtkEditable *entry = GTK_EDITABLE(data);
+    const char *param_base = g_object_get_data(G_OBJECT(btn), "param_type");
+    const char *current_text = gtk_editable_get_text(entry);
+    
+    int count = 1;
+    if (current_text) {
+        const char *tmp = current_text;
+        char search_str[32];
+        snprintf(search_str, sizeof(search_str), "[%s", param_base);
+        while ((tmp = strstr(tmp, search_str)) != NULL) {
+            count++;
+            tmp += strlen(search_str);
+        }
+    }
+    
+    char *new_text;
+    if (current_text && current_text[0] != '\0') {
+        new_text = g_strdup_printf("%s [%s%d]", current_text, param_base, count);
+    } else {
+        new_text = g_strdup_printf("[%s%d]", param_base, count);
+    }
+    gtk_editable_set_text(entry, new_text);
+    g_free(new_text);
+    gtk_editable_set_position(entry, -1);
+}
+
+static void on_custom_save_clicked(GtkButton *btn, gpointer data) {
+    GtkWidget *name_entry = g_object_get_data(G_OBJECT(btn), "name_entry");
+    GtkWidget *code_view = g_object_get_data(G_OBJECT(btn), "code_view");
+    GtkWidget *help_win = g_object_get_data(G_OBJECT(btn), "help_win");
+    
+    const char *def = gtk_editable_get_text(GTK_EDITABLE(name_entry));
+    if (!def || def[0] == '\0') return;
+    
+    char *def_copy = g_strdup(def);
+    char *name = trim(def_copy);
+    char *space = strchr(name, ' ');
+    if (space) {
+        *space = '\0';
+    }
+    
+    if (name[0] == '\0') {
+        g_free(def_copy);
+        return;
+    }
+    
+    GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(code_view));
+    GtkTextIter start, end;
+    gtk_text_buffer_get_bounds(buf, &start, &end);
+    char *code = gtk_text_buffer_get_text(buf, &start, &end, FALSE);
+    
+    if (!code || code[0] == '\0') {
+        g_free(code);
+        g_free(def_copy);
+        return;
+    }
+    
+    if (num_custom_commands < MAX_CUSTOM_COMMANDS) {
+        g_strlcpy(custom_commands[num_custom_commands].name, name, sizeof(custom_commands[0].name));
+        g_strlcpy(custom_commands[num_custom_commands].definition, def, sizeof(custom_commands[0].definition));
+        g_strlcpy(custom_commands[num_custom_commands].code, code, sizeof(custom_commands[0].code));
+        num_custom_commands++;
+        save_commands();
+        append_text("> Custom command created!");
+        
+        gtk_window_destroy(GTK_WINDOW(help_win));
+        show_help_gui_window(NULL, NULL);
+    }
+    g_free(code);
+    g_free(def_copy);
+}
+
+static void show_help_gui_window(GtkWidget *button, gpointer data) {
+    GtkWidget *help_win = gtk_window_new();
+    gtk_window_set_title(GTK_WINDOW(help_win), "Command Documentation & Settings");
+    gtk_window_set_default_size(GTK_WINDOW(help_win), 600, 700);
+    
+    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_widget_set_margin_start(vbox, 20);
+    gtk_widget_set_margin_end(vbox, 20);
+    gtk_widget_set_margin_top(vbox, 20);
+    gtk_widget_set_margin_bottom(vbox, 20);
+    gtk_window_set_child(GTK_WINDOW(help_win), vbox);
+    
+    GtkWidget *search = gtk_search_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(search), "Search commands...");
+    gtk_box_append(GTK_BOX(vbox), search);
+    
+    /* Custom Command Creation UI */
+    GtkWidget *custom_frame = gtk_frame_new("Create Custom Command");
+    gtk_box_append(GTK_BOX(vbox), custom_frame);
+    
+    GtkWidget *custom_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+    gtk_widget_set_margin_start(custom_box, 10);
+    gtk_widget_set_margin_end(custom_box, 10);
+    gtk_widget_set_margin_top(custom_box, 10);
+    gtk_widget_set_margin_bottom(custom_box, 10);
+    gtk_frame_set_child(GTK_FRAME(custom_frame), custom_box);
+    
+    GtkWidget *custom_name_entry = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(custom_name_entry), "Command Name (e.g. setup)");
+    gtk_box_append(GTK_BOX(custom_box), custom_name_entry);
+    
+    GtkWidget *btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+    gtk_box_append(GTK_BOX(custom_box), btn_box);
+    
+    const char *inputs[] = {"string", "file", "folder", "char"};
+    const char *labels[] = {"+ String", "+ File", "+ Folder", "+ Char"};
+    for (int i = 0; i < 4; i++) {
+        GtkWidget *btn = gtk_button_new_with_label(labels[i]);
+        g_object_set_data(G_OBJECT(btn), "param_type", (gpointer)inputs[i]);
+        g_signal_connect(btn, "clicked", G_CALLBACK(on_add_param_clicked), custom_name_entry);
+        gtk_box_append(GTK_BOX(btn_box), btn);
+    }
+    
+    GtkWidget *custom_code_view = gtk_text_view_new();
+    gtk_widget_set_size_request(custom_code_view, -1, 100);
+    GtkTextBuffer *custom_buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(custom_code_view));
+    gtk_text_buffer_set_text(custom_buf, "cd Documents\nls", -1);
+    GtkWidget *custom_scroll = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(custom_scroll), custom_code_view);
+    gtk_box_append(GTK_BOX(custom_box), custom_scroll);
+    
+    GtkWidget *custom_save_btn = gtk_button_new_with_label("Save Custom Command");
+    gtk_widget_add_css_class(custom_save_btn, "suggested-action");
+    gtk_box_append(GTK_BOX(custom_box), custom_save_btn);
+    
+    g_object_set_data(G_OBJECT(custom_save_btn), "name_entry", custom_name_entry);
+    g_object_set_data(G_OBJECT(custom_save_btn), "code_view", custom_code_view);
+    g_object_set_data(G_OBJECT(custom_save_btn), "help_win", help_win);
+    g_signal_connect(custom_save_btn, "clicked", G_CALLBACK(on_custom_save_clicked), NULL);
+    
+    GtkWidget *scroll = gtk_scrolled_window_new();
+    gtk_widget_set_vexpand(scroll, TRUE);
+    gtk_box_append(GTK_BOX(vbox), scroll);
+    
+    GtkWidget *listbox = gtk_list_box_new();
+    gtk_list_box_set_selection_mode(GTK_LIST_BOX(listbox), GTK_SELECTION_NONE);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), listbox);
+    
+    gtk_list_box_set_filter_func(GTK_LIST_BOX(listbox), help_filter_func, search, NULL);
+    g_signal_connect(search, "search-changed", G_CALLBACK(on_help_search_changed), listbox);
+    
+    for (int i = 0; i < num_terminal_commands; i++) {
+        GtkWidget *row_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+        gtk_widget_set_margin_start(row_box, 15);
+        gtk_widget_set_margin_end(row_box, 15);
+        gtk_widget_set_margin_top(row_box, 10);
+        gtk_widget_set_margin_bottom(row_box, 10);
+        gtk_widget_add_css_class(row_box, "folder-item");
+        
+        GtkWidget *title_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 15);
+        gtk_widget_set_margin_start(title_box, 15);
+        gtk_widget_set_margin_end(title_box, 15);
+        gtk_widget_set_margin_top(title_box, 10);
+        gtk_box_append(GTK_BOX(row_box), title_box);
+        
+        char *title_str = g_strdup_printf("<b>%s</b> <span foreground='gray'>(%s)</span>", 
+                                          terminal_commands[i].default_name, 
+                                          terminal_commands[i].category);
+        GtkWidget *name_label = gtk_label_new(NULL);
+        gtk_label_set_markup(GTK_LABEL(name_label), title_str);
+        gtk_widget_set_halign(name_label, GTK_ALIGN_START);
+        gtk_box_append(GTK_BOX(title_box), name_label);
+        g_free(title_str);
+        
+        GtkWidget *spacer = gtk_label_new("");
+        gtk_widget_set_hexpand(spacer, TRUE);
+        gtk_box_append(GTK_BOX(title_box), spacer);
+        
+        GtkWidget *edit_entry = gtk_entry_new();
+        gtk_editable_set_text(GTK_EDITABLE(edit_entry), terminal_commands[i].current_name);
+        gtk_widget_set_size_request(edit_entry, 150, -1);
+        g_signal_connect(edit_entry, "changed", G_CALLBACK(on_command_name_changed), GINT_TO_POINTER(i));
+        gtk_box_append(GTK_BOX(title_box), edit_entry);
+        
+        GtkWidget *desc = gtk_label_new(terminal_commands[i].description);
+        gtk_widget_set_halign(desc, GTK_ALIGN_START);
+        gtk_widget_set_margin_start(desc, 15);
+        gtk_widget_set_margin_bottom(desc, 10);
+        gtk_box_append(GTK_BOX(row_box), desc);
+        
+        /* Expander for detailed usage and example */
+        GtkWidget *expander = gtk_expander_new("View Details & Examples");
+        gtk_widget_set_margin_start(expander, 15);
+        gtk_widget_set_margin_bottom(expander, 10);
+        gtk_box_append(GTK_BOX(row_box), expander);
+        
+        GtkWidget *details_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+        gtk_widget_set_margin_start(details_box, 10);
+        gtk_widget_set_margin_end(details_box, 15);
+        gtk_widget_set_margin_top(details_box, 10);
+        
+        char *usage_str = g_strdup_printf("<b>Usage:</b> %s", terminal_commands[i].usage);
+        GtkWidget *usage_label = gtk_label_new(NULL);
+        gtk_label_set_markup(GTK_LABEL(usage_label), usage_str);
+        gtk_widget_set_halign(usage_label, GTK_ALIGN_START);
+        gtk_box_append(GTK_BOX(details_box), usage_label);
+        g_free(usage_str);
+        
+        GtkWidget *example_label = gtk_label_new(terminal_commands[i].example);
+        gtk_widget_set_halign(example_label, GTK_ALIGN_START);
+        gtk_widget_add_css_class(example_label, "term-text");
+        gtk_box_append(GTK_BOX(details_box), example_label);
+        
+        gtk_expander_set_child(GTK_EXPANDER(expander), details_box);
+        
+        GtkWidget *row = gtk_list_box_row_new();
+        g_object_set_data(G_OBJECT(row), "cmd_idx", GINT_TO_POINTER(i));
+        gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), row_box);
+        gtk_list_box_append(GTK_LIST_BOX(listbox), row);
+    }
+    
+    /* User Created Commands */
+    for (int i = 0; i < num_custom_commands; i++) {
+        GtkWidget *row_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+        gtk_widget_set_margin_start(row_box, 15);
+        gtk_widget_set_margin_end(row_box, 15);
+        gtk_widget_set_margin_top(row_box, 10);
+        gtk_widget_set_margin_bottom(row_box, 10);
+        gtk_widget_add_css_class(row_box, "folder-item");
+        
+        char *title_str = g_strdup_printf("<b>%s</b> <span foreground='gray'>(User Created)</span>", custom_commands[i].definition);
+        
+        GtkWidget *title_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 15);
+        gtk_box_append(GTK_BOX(row_box), title_box);
+        
+        GtkWidget *name_label = gtk_label_new(NULL);
+        gtk_label_set_markup(GTK_LABEL(name_label), title_str);
+        gtk_widget_set_halign(name_label, GTK_ALIGN_START);
+        gtk_box_append(GTK_BOX(title_box), name_label);
+        
+        GtkWidget *spacer = gtk_label_new("");
+        gtk_widget_set_hexpand(spacer, TRUE);
+        gtk_box_append(GTK_BOX(title_box), spacer);
+        
+        GtkWidget *delete_btn = gtk_button_new_with_label("Delete");
+        gtk_widget_add_css_class(delete_btn, "destructive-action");
+        g_object_set_data(G_OBJECT(delete_btn), "cmd_idx", GINT_TO_POINTER(i));
+        g_object_set_data(G_OBJECT(delete_btn), "help_win", help_win);
+        g_signal_connect(delete_btn, "clicked", G_CALLBACK(on_custom_delete_clicked), NULL);
+        gtk_box_append(GTK_BOX(title_box), delete_btn);
+        
+        g_free(title_str);
+        
+        GtkWidget *code_label = gtk_label_new(custom_commands[i].code);
+        gtk_widget_set_halign(code_label, GTK_ALIGN_START);
+        gtk_widget_add_css_class(code_label, "term-text");
+        gtk_box_append(GTK_BOX(row_box), code_label);
+        
+        GtkWidget *row = gtk_list_box_row_new();
+        g_object_set_data(G_OBJECT(row), "is_custom", GINT_TO_POINTER(1));
+        g_object_set_data(G_OBJECT(row), "cmd_idx", GINT_TO_POINTER(i));
+        gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), row_box);
+        gtk_list_box_append(GTK_LIST_BOX(listbox), row);
+    }
+    
+    gtk_window_present(GTK_WINDOW(help_win));
+}
+
 void open_terminal_window(void)
 {
+    static gboolean commands_loaded = FALSE;
+    if (!commands_loaded) {
+        load_commands();
+        commands_loaded = TRUE;
+    }
+    
     GtkWidget *window;
     GtkWidget *hbox;
     GtkWidget *box;
@@ -893,6 +1428,20 @@ void open_terminal_window(void)
     window = gtk_window_new();
     gtk_window_set_title(GTK_WINDOW(window), "Virtual Terminal");
     gtk_window_set_default_size(GTK_WINDOW(window), 1200, 600);
+    gtk_widget_add_css_class(window, "term-window");
+    
+    GtkWidget *header = gtk_header_bar_new();
+    gtk_window_set_titlebar(GTK_WINDOW(window), header);
+    
+    GtkWidget *help_btn = gtk_button_new_with_label("Help & Docs");
+    gtk_widget_add_css_class(help_btn, "suggested-action");
+    gtk_header_bar_pack_end(GTK_HEADER_BAR(header), help_btn);
+    g_signal_connect(help_btn, "clicked", G_CALLBACK(show_help_gui_window), NULL);
+    
+    GtkWidget *reset_btn = gtk_button_new_with_label("Reset Commands");
+    gtk_widget_add_css_class(reset_btn, "destructive-action");
+    gtk_header_bar_pack_end(GTK_HEADER_BAR(header), reset_btn);
+    g_signal_connect(reset_btn, "clicked", G_CALLBACK(on_help_reset_clicked), window);
 
     hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
     gtk_window_set_child(GTK_WINDOW(window), hbox);
@@ -904,6 +1453,7 @@ void open_terminal_window(void)
 
     textview = gtk_text_view_new();
     gtk_text_view_set_editable(GTK_TEXT_VIEW(textview), FALSE);
+    gtk_widget_add_css_class(textview, "term-text");
     buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(textview));
 
     append_text("Welcome to Virtual OS");
@@ -916,21 +1466,24 @@ void open_terminal_window(void)
 
     entry = gtk_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(entry), "Enter command...");
+    gtk_widget_add_css_class(entry, "term-entry");
     g_signal_connect(entry, "activate", G_CALLBACK(process_command), NULL);
     gtk_box_append(GTK_BOX(box), entry);
 
     // AI Chat panel
     ai_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
-    gtk_widget_set_size_request(ai_vbox, 240, -1);
+    gtk_widget_set_size_request(ai_vbox, 300, -1);
+    gtk_widget_add_css_class(ai_vbox, "term-ai-panel");
     gtk_box_append(GTK_BOX(hbox), ai_vbox);
     
-    ai_label = gtk_label_new("Gemini Chat");
-    gtk_widget_add_css_class(ai_label, "ai-title");
+    ai_label = gtk_label_new("\xe2\x9c\xa6 AI Chat");
+    gtk_widget_add_css_class(ai_label, "term-ai-title");
     gtk_box_append(GTK_BOX(ai_vbox), ai_label);
     
     ai_textview = gtk_text_view_new();
     gtk_text_view_set_editable(GTK_TEXT_VIEW(ai_textview), FALSE);
     gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(ai_textview), GTK_WRAP_WORD_CHAR);
+    gtk_widget_add_css_class(ai_textview, "term-ai-text");
     ai_chat_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(ai_textview));
     
     ai_scroll = gtk_scrolled_window_new();
@@ -941,11 +1494,14 @@ void open_terminal_window(void)
     ai_entry_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
     ai_entry = gtk_entry_new();
     gtk_widget_set_hexpand(ai_entry, TRUE);
-    gtk_entry_set_placeholder_text(GTK_ENTRY(ai_entry), "Ask Gemini...");
-    ai_btn = gtk_button_new_with_label("Send");
+    gtk_entry_set_placeholder_text(GTK_ENTRY(ai_entry), "Ask AI...");
+    gtk_widget_add_css_class(ai_entry, "term-entry");
     
-    g_signal_connect(ai_btn, "clicked", G_CALLBACK(on_terminal_gemini_prompt_run), ai_entry);
-    g_signal_connect(ai_entry, "activate", G_CALLBACK(on_terminal_gemini_prompt_run), ai_entry);
+    ai_btn = gtk_button_new_with_label("Send");
+    gtk_widget_add_css_class(ai_btn, "term-ai-btn");
+    
+    g_signal_connect(ai_btn, "clicked", G_CALLBACK(on_terminal_ai_prompt_run), ai_entry);
+    g_signal_connect(ai_entry, "activate", G_CALLBACK(on_terminal_ai_prompt_run), ai_entry);
     
     gtk_box_append(GTK_BOX(ai_entry_box), ai_entry);
     gtk_box_append(GTK_BOX(ai_entry_box), ai_btn);

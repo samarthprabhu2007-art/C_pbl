@@ -66,7 +66,7 @@ static gboolean suppress_open_once = FALSE;
 static void open_desktop_item(GtkButton *button, gpointer data);
 static void open_folder_window(const char *virtual_path);
 static void open_ai_prompt(void);
-static void open_browser(void);
+void open_browser(void);
 static const char *icon_for_name(const char *name, gboolean is_dir);
 static void populate_folder(FolderCtx *ctx, const char *query);
 
@@ -484,14 +484,355 @@ static void open_ai_prompt(void)
     gtk_window_present(GTK_WINDOW(win));
 }
 
-static void open_browser(void)
+/* ── BrowserCtx: state for the in-app browser window ── */
+typedef struct {
+    GtkWidget *url_entry;
+    GtkWidget *textview;
+    GtkWidget *title_label;
+    GtkWidget *status_label;
+    GtkWidget *link_box;
+    GtkWidget *spinner;
+    char     **history;
+    int        hist_count;
+    int        hist_pos;
+} BrowserCtx;
+
+static void browser_navigate(BrowserCtx *ctx, const char *url);
+
+static void browser_go_cb(GtkButton *btn, gpointer data)
+{
+    BrowserCtx *ctx = data;
+    const char *url = gtk_editable_get_text(GTK_EDITABLE(ctx->url_entry));
+    if (url && url[0] != '\0') browser_navigate(ctx, url);
+}
+
+static void browser_entry_activate_cb(GtkEntry *entry, gpointer data)
+{
+    browser_go_cb(NULL, data);
+}
+
+static void browser_back_cb(GtkButton *btn, gpointer data)
+{
+    BrowserCtx *ctx = data;
+    if (ctx->hist_pos > 0) {
+        ctx->hist_pos--;
+        gtk_editable_set_text(GTK_EDITABLE(ctx->url_entry), ctx->history[ctx->hist_pos]);
+        browser_navigate(ctx, ctx->history[ctx->hist_pos]);
+    }
+}
+
+static void browser_fwd_cb(GtkButton *btn, gpointer data)
+{
+    BrowserCtx *ctx = data;
+    if (ctx->hist_pos < ctx->hist_count - 1) {
+        ctx->hist_pos++;
+        gtk_editable_set_text(GTK_EDITABLE(ctx->url_entry), ctx->history[ctx->hist_pos]);
+        browser_navigate(ctx, ctx->history[ctx->hist_pos]);
+    }
+}
+
+static void browser_link_cb(GtkButton *btn, gpointer data)
+{
+    BrowserCtx *ctx = g_object_get_data(G_OBJECT(btn), "browser_ctx");
+    const char *url = (const char *)data;
+    if (ctx && url) {
+        gtk_editable_set_text(GTK_EDITABLE(ctx->url_entry), url);
+        browser_navigate(ctx, url);
+    }
+}
+
+static void browser_home_cb(GtkButton *btn, gpointer data)
+{
+    BrowserCtx *ctx = data;
+    gtk_editable_set_text(GTK_EDITABLE(ctx->url_entry), "https://www.google.com");
+    browser_navigate(ctx, "https://www.google.com");
+}
+
+static void free_browser_ctx(gpointer data, GClosure *closure)
+{
+    BrowserCtx *ctx = data;
+    for (int i = 0; i < ctx->hist_count; i++) g_free(ctx->history[i]);
+    g_free(ctx->history);
+    g_free(ctx);
+}
+
+static void browser_navigate(BrowserCtx *ctx, const char *url)
 {
     char *dir = g_get_current_dir();
-    /* Let Windows file association handle .py to bypass MSYS2 python PATH issues */
-    char *command = g_strdup_printf("cmd.exe /c start \"\" \"%s/browser.py\"", dir);
-    g_spawn_command_line_async(command, NULL);
+    char *escaped = g_shell_quote(url);
+    char *command = g_strdup_printf("python \"%s/web_fetch.py\" %s", dir, escaped);
+    char *stdout_buf = NULL;
+    char *stderr_buf = NULL;
+    int exit_status;
+
+    gtk_label_set_text(GTK_LABEL(ctx->status_label), "Loading...");
+    gtk_label_set_text(GTK_LABEL(ctx->title_label), "Loading...");
+
+    g_spawn_command_line_sync(command, &stdout_buf, &stderr_buf, &exit_status, NULL);
     g_free(command);
+    g_free(escaped);
     g_free(dir);
+
+    /* Clear old links */
+    GtkWidget *child;
+    while ((child = gtk_widget_get_first_child(ctx->link_box)) != NULL)
+        gtk_box_remove(GTK_BOX(ctx->link_box), child);
+
+    if (stdout_buf == NULL || stdout_buf[0] == '\0') {
+        GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(ctx->textview));
+        gtk_text_buffer_set_text(buf, stderr_buf ? stderr_buf : "Failed to fetch page.", -1);
+        gtk_label_set_text(GTK_LABEL(ctx->status_label), "Error");
+        gtk_label_set_text(GTK_LABEL(ctx->title_label), "Error");
+        g_free(stdout_buf);
+        g_free(stderr_buf);
+        return;
+    }
+    g_free(stderr_buf);
+
+    /* Parse JSON response — simple manual parsing */
+    gboolean ok = (strstr(stdout_buf, "\"ok\": true") != NULL ||
+                   strstr(stdout_buf, "\"ok\":true") != NULL);
+
+    if (!ok) {
+        char *err = strstr(stdout_buf, "\"error\":");
+        GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(ctx->textview));
+        gtk_text_buffer_set_text(buf, err ? err : "Failed to load page.", -1);
+        gtk_label_set_text(GTK_LABEL(ctx->status_label), "Error");
+        gtk_label_set_text(GTK_LABEL(ctx->title_label), "Error");
+        g_free(stdout_buf);
+        return;
+    }
+
+    /* Extract title */
+    char *title_start = strstr(stdout_buf, "\"title\": \"");
+    if (!title_start) title_start = strstr(stdout_buf, "\"title\":\"");
+    if (title_start) {
+        title_start = strchr(title_start + 8, '"') + 1;
+        char *title_end = title_start;
+        while (*title_end && !(*title_end == '"' && *(title_end - 1) != '\\')) title_end++;
+        char saved = *title_end;
+        *title_end = '\0';
+        gtk_label_set_text(GTK_LABEL(ctx->title_label), title_start);
+        *title_end = saved;
+    }
+
+    /* Extract text content — find "text": " and read until the closing pattern */
+    char *text_start = strstr(stdout_buf, "\"text\": \"");
+    if (!text_start) text_start = strstr(stdout_buf, "\"text\":\"");
+    if (text_start) {
+        text_start = strchr(text_start + 6, '"') + 1;
+        /* Find end — look for ", "links" or ", "url" pattern */
+        char *text_end = strstr(text_start, "\", \"links\"");
+        if (!text_end) text_end = strstr(text_start, "\",\"links\"");
+        if (!text_end) text_end = text_start + strlen(text_start);
+        char saved = *text_end;
+        *text_end = '\0';
+
+        /* Unescape \\n to real newlines */
+        GString *decoded = g_string_new(NULL);
+        for (char *p = text_start; *p; p++) {
+            if (*p == '\\' && *(p+1) == 'n') { g_string_append_c(decoded, '\n'); p++; }
+            else if (*p == '\\' && *(p+1) == 't') { g_string_append_c(decoded, '\t'); p++; }
+            else if (*p == '\\' && *(p+1) == '"') { g_string_append_c(decoded, '"'); p++; }
+            else if (*p == '\\' && *(p+1) == '\\') { g_string_append_c(decoded, '\\'); p++; }
+            else g_string_append_c(decoded, *p);
+        }
+
+        GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(ctx->textview));
+        gtk_text_buffer_set_text(buf, decoded->str, -1);
+        g_string_free(decoded, TRUE);
+        *text_end = saved;
+    }
+
+    /* Extract links — find each "url": "..." in the links array */
+    char *links_start = strstr(stdout_buf, "\"links\":");
+    if (links_start) {
+        char *p = links_start;
+        int link_count = 0;
+        while ((p = strstr(p, "\"url\": \"")) != NULL && link_count < 15) {
+            if (!p) break;
+            p += 8;
+            char *url_end = p;
+            while (*url_end && !(*url_end == '"' && *(url_end-1) != '\\')) url_end++;
+            char saved = *url_end; *url_end = '\0';
+            char *link_url = g_strdup(p);
+            *url_end = saved;
+
+            /* Find preceding "text" value */
+            char *tstart = strstr(url_end, "\"text\": \"");
+            if (!tstart) tstart = strstr(url_end, "\"text\":\"");
+            char *link_label_str = NULL;
+            if (tstart) {
+                tstart = strchr(tstart + 6, '"') + 1;
+                char *tend = tstart;
+                while (*tend && !(*tend == '"' && *(tend-1) != '\\')) tend++;
+                char s2 = *tend; *tend = '\0';
+                link_label_str = g_strdup(tstart);
+                *tend = s2;
+            }
+
+            GtkWidget *link_btn = gtk_button_new_with_label(
+                link_label_str ? link_label_str : link_url);
+            gtk_widget_add_css_class(link_btn, "flat");
+            g_object_set_data(G_OBJECT(link_btn), "browser_ctx", ctx);
+            g_signal_connect_data(link_btn, "clicked",
+                G_CALLBACK(browser_link_cb), link_url,
+                (GClosureNotify)g_free, 0);
+            gtk_box_append(GTK_BOX(ctx->link_box), link_btn);
+
+            g_free(link_label_str);
+            p = url_end + 1;
+            link_count++;
+        }
+    }
+
+    /* Update history */
+    /* Trim forward history if we navigated from middle */
+    for (int i = ctx->hist_pos + 1; i < ctx->hist_count; i++)
+        g_free(ctx->history[i]);
+    ctx->hist_count = ctx->hist_pos + 1;
+
+    ctx->history = g_realloc(ctx->history, sizeof(char*) * (ctx->hist_count + 1));
+    ctx->history[ctx->hist_count] = g_strdup(url);
+    ctx->hist_count++;
+    ctx->hist_pos = ctx->hist_count - 1;
+
+    /* Update URL bar with final URL */
+    char *final_url = strstr(stdout_buf, "\"url\": \"");
+    if (!final_url) final_url = strstr(stdout_buf, "\"url\":\"");
+    if (final_url) {
+        final_url = strchr(final_url + 5, '"') + 1;
+        char *ue = final_url;
+        while (*ue && !(*ue == '"' && *(ue-1) != '\\')) ue++;
+        char s3 = *ue; *ue = '\0';
+        gtk_editable_set_text(GTK_EDITABLE(ctx->url_entry), final_url);
+        *ue = s3;
+    }
+
+    gtk_label_set_text(GTK_LABEL(ctx->status_label), "Done");
+    g_free(stdout_buf);
+}
+
+void open_browser(void)
+{
+    BrowserCtx *ctx = g_new0(BrowserCtx, 1);
+    ctx->history = NULL;
+    ctx->hist_count = 0;
+    ctx->hist_pos = -1;
+
+    GtkWidget *win = gtk_window_new();
+    gtk_window_set_title(GTK_WINDOW(win), "VirtualOS Browser");
+    gtk_window_set_default_size(GTK_WINDOW(win), 1000, 700);
+
+    /* ── Browser CSS ── */
+    GtkCssProvider *bp = gtk_css_provider_new();
+    gtk_css_provider_load_from_string(bp,
+        ".browser-bar { background: #1e1e2e; padding: 6px 10px; }"
+        ".browser-url { background: #313244; color: #cdd6f4; border-radius: 20px;"
+        "  border: 1px solid #45475a; padding: 6px 14px; font-size: 13px; }"
+        ".browser-url:focus { border-color: #89b4fa; }"
+        ".browser-nav { background: transparent; color: #cdd6f4; border: none;"
+        "  font-size: 15px; min-width: 36px; min-height: 36px; border-radius: 8px; }"
+        ".browser-nav:hover { background: #45475a; }"
+        ".browser-content { background: #1e1e2e; color: #cdd6f4;"
+        "  font-family: 'Segoe UI', sans-serif; font-size: 14px; padding: 16px; }"
+        ".browser-title { font-weight: 700; font-size: 13px; color: #a6adc8; }"
+        ".browser-status { font-size: 11px; color: #6c7086; padding: 2px 10px; background: #181825; }"
+        ".browser-links { background: #181825; padding: 8px; }"
+        ".browser-links button { color: #89b4fa; font-size: 12px; }");
+    gtk_style_context_add_provider_for_display(
+        gdk_display_get_default(), GTK_STYLE_PROVIDER(bp),
+        GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    g_object_unref(bp);
+
+    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_window_set_child(GTK_WINDOW(win), vbox);
+
+    /* ── Toolbar ── */
+    GtkWidget *toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_widget_add_css_class(toolbar, "browser-bar");
+
+    GtkWidget *back_btn = gtk_button_new_with_label("◀");
+    gtk_widget_add_css_class(back_btn, "browser-nav");
+    g_signal_connect(back_btn, "clicked", G_CALLBACK(browser_back_cb), ctx);
+    gtk_box_append(GTK_BOX(toolbar), back_btn);
+
+    GtkWidget *fwd_btn = gtk_button_new_with_label("▶");
+    gtk_widget_add_css_class(fwd_btn, "browser-nav");
+    g_signal_connect(fwd_btn, "clicked", G_CALLBACK(browser_fwd_cb), ctx);
+    gtk_box_append(GTK_BOX(toolbar), fwd_btn);
+
+    GtkWidget *home_btn = gtk_button_new_with_label("⌂");
+    gtk_widget_add_css_class(home_btn, "browser-nav");
+    g_signal_connect(home_btn, "clicked", G_CALLBACK(browser_home_cb), ctx);
+    gtk_box_append(GTK_BOX(toolbar), home_btn);
+
+    ctx->url_entry = gtk_entry_new();
+    gtk_editable_set_text(GTK_EDITABLE(ctx->url_entry), "https://www.google.com");
+    gtk_widget_set_hexpand(ctx->url_entry, TRUE);
+    gtk_widget_add_css_class(ctx->url_entry, "browser-url");
+    g_signal_connect(ctx->url_entry, "activate", G_CALLBACK(browser_entry_activate_cb), ctx);
+    gtk_box_append(GTK_BOX(toolbar), ctx->url_entry);
+
+    GtkWidget *go_btn = gtk_button_new_with_label("Go");
+    gtk_widget_add_css_class(go_btn, "browser-nav");
+    g_signal_connect(go_btn, "clicked", G_CALLBACK(browser_go_cb), ctx);
+    gtk_box_append(GTK_BOX(toolbar), go_btn);
+
+    gtk_box_append(GTK_BOX(vbox), toolbar);
+
+    /* ── Title bar ── */
+    ctx->title_label = gtk_label_new("VirtualOS Browser — Enter a URL and press Go");
+    gtk_widget_add_css_class(ctx->title_label, "browser-title");
+    gtk_widget_set_halign(ctx->title_label, GTK_ALIGN_START);
+    gtk_widget_set_margin_start(ctx->title_label, 12);
+    gtk_widget_set_margin_top(ctx->title_label, 4);
+    gtk_widget_set_margin_bottom(ctx->title_label, 2);
+    gtk_label_set_ellipsize(GTK_LABEL(ctx->title_label), PANGO_ELLIPSIZE_END);
+    gtk_box_append(GTK_BOX(vbox), ctx->title_label);
+
+    /* ── Content area ── */
+    GtkWidget *paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_widget_set_vexpand(paned, TRUE);
+    gtk_box_append(GTK_BOX(vbox), paned);
+
+    GtkWidget *content_scroll = gtk_scrolled_window_new();
+    gtk_widget_set_hexpand(content_scroll, TRUE);
+    ctx->textview = gtk_text_view_new();
+    gtk_text_view_set_editable(GTK_TEXT_VIEW(ctx->textview), FALSE);
+    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(ctx->textview), GTK_WRAP_WORD_CHAR);
+    gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(ctx->textview), FALSE);
+    gtk_widget_add_css_class(ctx->textview, "browser-content");
+    gtk_text_buffer_set_text(
+        gtk_text_view_get_buffer(GTK_TEXT_VIEW(ctx->textview)),
+        "Welcome to VirtualOS Browser!\n\nEnter a URL in the address bar above and press Go or Enter to browse the web.\n\nTry: google.com, wikipedia.org, example.com", -1);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(content_scroll), ctx->textview);
+    gtk_paned_set_start_child(GTK_PANED(paned), content_scroll);
+
+    /* ── Links sidebar ── */
+    GtkWidget *link_scroll = gtk_scrolled_window_new();
+    gtk_widget_set_size_request(link_scroll, 220, -1);
+    ctx->link_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    gtk_widget_add_css_class(ctx->link_box, "browser-links");
+    GtkWidget *links_title = gtk_label_new("Links");
+    gtk_widget_add_css_class(links_title, "browser-title");
+    gtk_box_append(GTK_BOX(ctx->link_box), links_title);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(link_scroll), ctx->link_box);
+    gtk_paned_set_end_child(GTK_PANED(paned), link_scroll);
+    gtk_paned_set_position(GTK_PANED(paned), 750);
+
+    /* ── Status bar ── */
+    ctx->status_label = gtk_label_new("Ready");
+    gtk_widget_add_css_class(ctx->status_label, "browser-status");
+    gtk_widget_set_halign(ctx->status_label, GTK_ALIGN_START);
+    gtk_box_append(GTK_BOX(vbox), ctx->status_label);
+
+    /* Free ctx on window close */
+    g_signal_connect_data(win, "destroy",
+        G_CALLBACK(gtk_window_destroy), ctx,
+        (GClosureNotify)free_browser_ctx, G_CONNECT_SWAPPED);
+
+    gtk_window_present(GTK_WINDOW(win));
 }
 
 static void open_desktop_item(GtkButton *button, gpointer data)
@@ -1148,6 +1489,23 @@ static void refresh_desktop_icons(void)
     g_free(real_dir);
 }
 
+static gboolean update_clock(gpointer data) {
+    GtkLabel *label = GTK_LABEL(data);
+    GDateTime *now = g_date_time_new_now_local();
+    char *time_str = g_date_time_format(now, "%I:%M %p");
+    char *date_str = g_date_time_format(now, "%A, %B %d");
+    char *markup = g_strdup_printf(
+        "<span size='48000' font_weight='200'>%s</span>\n"
+        "<span size='22000' font_weight='400' alpha='90%%'>%s</span>", 
+        time_str, date_str);
+    gtk_label_set_markup(label, markup);
+    g_free(markup);
+    g_free(time_str);
+    g_free(date_str);
+    g_date_time_unref(now);
+    return G_SOURCE_CONTINUE;
+}
+
 static void activate(GtkApplication *app, gpointer user_data)
 {
     GtkWidget *window;
@@ -1173,8 +1531,8 @@ static void activate(GtkApplication *app, gpointer user_data)
 
     /* ── Layout: simple vertical GtkBox ──
      *   ┌──────────────────────────────────┐
-     *   │  GtkFixed (desktop)  vexpand=T   │  ← wallpaper + draggable icons
-     *   │                                  │
+     *   │  GtkOverlay (desktop_overlay)    │  ← clock + wallpaper
+     *   │    └─ GtkFixed (desktop)         │  ← draggable icons
      *   ├──────────────────────────────────┤
      *   │  GtkBox (taskbar)   height=44    │  ← Terminal | Search | AI
      *   └──────────────────────────────────┘
@@ -1182,11 +1540,26 @@ static void activate(GtkApplication *app, gpointer user_data)
     GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_window_set_child(GTK_WINDOW(window), vbox);
 
-    /* Desktop canvas — takes all remaining space */
+    /* Desktop canvas — wrapped in an overlay for the centered clock */
+    GtkWidget *desktop_overlay = gtk_overlay_new();
+    gtk_widget_set_hexpand(desktop_overlay, TRUE);
+    gtk_widget_set_vexpand(desktop_overlay, TRUE);
+    gtk_box_append(GTK_BOX(vbox), desktop_overlay);
+
     desktop = gtk_fixed_new();
-    gtk_widget_set_hexpand(desktop, TRUE);
-    gtk_widget_set_vexpand(desktop, TRUE);
-    gtk_box_append(GTK_BOX(vbox), desktop);
+    gtk_overlay_set_child(GTK_OVERLAY(desktop_overlay), desktop);
+    
+    /* Transparent Centered Clock */
+    GtkWidget *clock_label = gtk_label_new("");
+    gtk_widget_add_css_class(clock_label, "desktop-clock");
+    gtk_widget_set_halign(clock_label, GTK_ALIGN_CENTER);
+    gtk_widget_set_valign(clock_label, GTK_ALIGN_START);
+    gtk_widget_set_margin_top(clock_label, 120);
+    gtk_label_set_justify(GTK_LABEL(clock_label), GTK_JUSTIFY_CENTER);
+    gtk_overlay_add_overlay(GTK_OVERLAY(desktop_overlay), clock_label);
+    
+    update_clock(clock_label);
+    g_timeout_add_seconds(1, update_clock, clock_label);
 
     /* ── Wallpaper (CSS based so it doesn't force a minimum window size) ── */
     char *cwd = g_get_current_dir();
@@ -1196,7 +1569,9 @@ static void activate(GtkApplication *app, gpointer user_data)
     }
     char *bg_css = g_strdup_printf(
         ".desktop-bg { background-image: url('file:///%s/assets/wallpaper.png'); "
-        "background-size: cover; background-position: center; }", cwd);
+        "background-size: cover; background-position: center; }\n"
+        ".desktop-clock { font-family: 'Segoe UI', sans-serif; "
+        "color: rgba(255, 255, 255, 0.95); text-shadow: 0px 4px 15px rgba(0,0,0,0.6); background: transparent; }", cwd);
     GtkCssProvider *bg_provider = gtk_css_provider_new();
     gtk_css_provider_load_from_string(bg_provider, bg_css);
     gtk_style_context_add_provider_for_display(
@@ -1246,14 +1621,6 @@ static void activate(GtkApplication *app, gpointer user_data)
     g_signal_connect(terminal_btn, "clicked", G_CALLBACK(open_terminal), NULL);
     gtk_box_append(GTK_BOX(taskbar), terminal_btn);
 
-    /* LEFT: Browser (next to Terminal) */
-    GtkWidget *browser_btn = gtk_button_new_with_label("Browser");
-    gtk_widget_add_css_class(browser_btn, "taskbar-btn");
-    gtk_widget_set_size_request(browser_btn, 110, 32);
-    gtk_widget_set_valign(browser_btn, GTK_ALIGN_CENTER);
-    gtk_widget_set_margin_start(browser_btn, 8);
-    g_signal_connect(browser_btn, "clicked", G_CALLBACK(open_browser), NULL);
-    gtk_box_append(GTK_BOX(taskbar), browser_btn);
 
     /* Spacer */
     GtkWidget *spacer1 = gtk_label_new("");

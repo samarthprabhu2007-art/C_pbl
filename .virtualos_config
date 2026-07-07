@@ -1,0 +1,26 @@
+ALIAS|0|help
+ALIAS|1|pwd
+ALIAS|2|ls
+ALIAS|3|cd
+ALIAS|4|touch
+ALIAS|5|mkdir
+ALIAS|6|rm
+ALIAS|7|rmdir
+ALIAS|8|cat
+ALIAS|9|write
+ALIAS|10|append
+ALIAS|11|cp
+ALIAS|12|mv
+ALIAS|13|ai
+ALIAS|14|whoami
+ALIAS|15|date
+ALIAS|16|clear
+ALIAS|17|echo
+ALIAS|18|browse
+CUSTOM_COUNT|1
+CMD_NAME|writefilefolder
+CMD_DEF|writefilefolder [string1] [file1] [folder1]
+CMD_CODE_START
+cd folder1
+write file1 string1
+CMD_CODE_END
