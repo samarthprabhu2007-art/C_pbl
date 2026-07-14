@@ -57,7 +57,7 @@ def call_ai(prompt):
         "If they just say 'hello', say 'Hello!'"
     )
 
-    url = "https://api.x.ai/v1/chat/completions"
+    url = "https://api.groq.com/openai/v1/chat/completions"
     data = {
         "model": model,
         "messages": [
@@ -72,7 +72,8 @@ def call_ai(prompt):
     for i, api_key in enumerate(api_keys):
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}"
+            "Authorization": f"Bearer {api_key}",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)"
         }
 
         req = urllib.request.Request(url, data=json.dumps(data).encode('utf-8'), headers=headers)

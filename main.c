@@ -1495,8 +1495,8 @@ static gboolean update_clock(gpointer data) {
     char *time_str = g_date_time_format(now, "%I:%M %p");
     char *date_str = g_date_time_format(now, "%A, %B %d");
     char *markup = g_strdup_printf(
-        "<span size='48000' font_weight='200'>%s</span>\n"
-        "<span size='22000' font_weight='400' alpha='90%%'>%s</span>", 
+        "<span size='48000' font_weight='700'>%s</span>\n"
+        "<span size='22000' font_weight='700'>%s</span>", 
         time_str, date_str);
     gtk_label_set_markup(label, markup);
     g_free(markup);
@@ -1571,7 +1571,7 @@ static void activate(GtkApplication *app, gpointer user_data)
         ".desktop-bg { background-image: url('file:///%s/assets/wallpaper.png'); "
         "background-size: cover; background-position: center; }\n"
         ".desktop-clock { font-family: 'Segoe UI', sans-serif; "
-        "color: rgba(255, 255, 255, 0.95); text-shadow: 0px 4px 15px rgba(0,0,0,0.6); background: transparent; }", cwd);
+        "color: rgba(0, 0, 0, 1.0); font-weight: bold; background: transparent; }", cwd);
     GtkCssProvider *bg_provider = gtk_css_provider_new();
     gtk_css_provider_load_from_string(bg_provider, bg_css);
     gtk_style_context_add_provider_for_display(

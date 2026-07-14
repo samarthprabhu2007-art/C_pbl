@@ -15,7 +15,7 @@
 # ─────────────────────────────────────────────────────
 
 export PATH="/ucrt64/bin:$PATH"
-cd "/c/Users/samar/OneDrive/Desktop/VirtualOS"
+cd "/d/C PBL/C_pbl"
 
 echo "=== Building VirtualOS ==="
 echo "  Algorithms : Bubble Sort, Binary Search (lower/upper bound)"
@@ -25,7 +25,7 @@ echo ""
 gcc main.c terminal.c src/algorithms.c \
     -o virtualos \
     $(pkg-config --cflags --libs gtk4) \
-    -Wall -Wextra -Wno-unused-parameter \
+    -Wall -Wextra -Wno-unused-parameter -mconsole \
     2>&1
 
 EXIT=$?
